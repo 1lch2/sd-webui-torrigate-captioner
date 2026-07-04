@@ -8,6 +8,8 @@ Original Model: [Minthy/ToriiGate-0.5](https://huggingface.co/Minthy/ToriiGate-0
 
 GGUF Models: [DraconicDragon/ToriiGate-0.5-GGUF](https://huggingface.co/DraconicDragon/ToriiGate-0.5-GGUF)
 
+> The Q4_K_M quantized GGUF model is recommended, as it is relatively VRAM-friendly.
+
 ## Features
 
 - **Connect to Local LLMs:** Configure and connect to a running `llama-server` (e.g., from `llama.cpp`) to run multimodal models for image captioning locally.
@@ -44,7 +46,29 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Recommended: LM Studio
+
+1. Download and install LM Studio: https://lmstudio.ai/
+2. Launch LM Studio and enable Developer Mode in the settings.
+3. Set LM Studio's model storage directory.
+4. Download the GGUF model and the mmproj model and place them in LM Studio's model directory. Note that both models must be in the same subfolder.
+   - The model subfolder must be nested inside a folder named after the model author.
+   - Taking the GGUF model above as an example, the model path is: `\DraconicDragon\ToriiGate-0.5-GGUF`
+5. Rename the mmproj model to `mmproj-BF16.gguf`, otherwise LM Studio cannot detect it.
+6. Select the Developer panel on the left, choose model loading at the top, and modify the following parameters (leave the rest at their defaults):
+   - Context length: 4096
+   - GPU offload: max
+   - Try mmap(): off
+   - K-cache quantization type: Q8_0
+   - V-cache quantization type: Q8_0
+7. Load the model, then find the model ID and inference endpoint on the right.
+   - Note: This configuration uses roughly 4GB of VRAM. If you don't have enough VRAM, you can reduce the GPU offload layers, trading speed and system memory for VRAM.
+8. Find the **ToriiGate Captioner** tab at the top of the WebUI and enter the URL and model ID.
+
+### llama.cpp Inference
+
 1. Start your `llama-server` instance equipped with a vision-capable model (like LLaVA, Qwen-VL, JoyCaption, etc.).
+   - For llama.cpp server config, check the guide from original repo: https://github.com/litch230/comfyui_toriigate#running-the-llamacpp-server
 2. Launch your SD WebUI.
 3. Go to the **ToriiGate Captioner** tab.
 4. (Optional) Set the Llama-server URL in the main UI or in the WebUI Settings -> ToriiGate Captioner. The default is `http://127.0.0.1:8080`.
@@ -52,8 +76,6 @@ pip install -r requirements.txt
 6. Select your preferred **Caption Type**.
 7. Enable character lists, descriptions, or global tags if you want the LLM to ground its output to specific details.
 8. Click **Generate** and wait for your local LLM to return the caption.
-
-Alternatively, you can use clients like LM Studio to load the model. For llama.cpp server config, check the guide from original repo: https://github.com/litch230/comfyui_toriigate#running-the-llamacpp-server
 
 ## Configuration
 
