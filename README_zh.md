@@ -62,7 +62,7 @@ pip install -r requirements.txt
    - K缓存量化类型：Q8_0
    - V缓存量化类型：Q8_0
 7. 加载模型，在右边找到模型id和推理端点。
-   - 注意，此设置下会占用约 4GB 显存，如果显存不够可以调整山姆的GPU卸载层数，用速度和内存空间换取显存
+   - 注意，此设置下会占用约 4GB 显存，如果显存不够可以调整上面的GPU卸载层数，用速度和内存空间换取显存
 8. 在 WebUI 顶部找到 **ToriiGate Captioner** 标签页，输入URL和模型id
 
 ### llama.cpp 推理
