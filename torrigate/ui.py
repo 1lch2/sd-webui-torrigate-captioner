@@ -3,7 +3,7 @@ from typing import List, Tuple
 from modules import shared
 from .grounding import build_grounding
 from .api import generate_caption
-from .batch import run_batch, render_batch_html
+from .batch import run_batch, render_batch_html, request_stop
 
 CAPTION_TYPES = [
     "short",
@@ -172,6 +172,16 @@ def on_generate_click(
         )
 
 
+def on_stop_click():
+    """Signal a running batch to stop after the current image(s).
+
+    Returns nothing: the batch loop polls the stop flag and updates the batch
+    panel itself, so this handler has no output to render. A stop with no batch
+    running is harmless — run_batch() clears the flag at the start of each run.
+    """
+    request_stop()
+
+
 def create_ui():
     with gr.Blocks() as torii_interface:
         with gr.Row():
@@ -226,7 +236,7 @@ def create_ui():
                         elem_id="torrigate_model_name",
                     )
                     max_pixels_mp = gr.Slider(
-                        minimum=0.1,
+                        minimum=1,
                         maximum=4.0,
                         step=0.1,
                         value=2.0,
@@ -356,6 +366,12 @@ def create_ui():
                     variant="primary",
                     elem_id="torrigate_generate_btn",
                 )
+                stop_btn = gr.Button(
+                    "Stop",
+                    variant="stop",
+                    visible=False,
+                    elem_id="torrigate_stop_btn",
+                )
                 output_text = gr.Textbox(
                     label="Result",
                     lines=25,
@@ -401,18 +417,24 @@ def create_ui():
             outputs=[output_text, batch_html],
         )
 
+        # The Stop button only signals the running batch loop; it produces no
+        # output of its own (the loop renders the final "stopped" panel).
+        stop_btn.click(fn=on_stop_click, inputs=None, outputs=None)
+
         # Switching tabs toggles which right-column panel is shown, relabels
-        # the button, and clears the inactive input so the generate handler's
-        # mode detection (folder non-empty => batch) stays unambiguous. Each
-        # .select() unconditionally sets its own mode (mirrors modules/ui.py).
+        # the button, clears the inactive input so the generate handler's mode
+        # detection (folder non-empty => batch) stays unambiguous, and shows
+        # the Stop button only in batch mode. Each .select() unconditionally
+        # sets its own mode (mirrors modules/ui.py).
         single_tab.select(
             fn=lambda: (
                 gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(value="Generate Caption"),
                 "",
+                gr.update(visible=False),
             ),
-            outputs=[output_text, batch_html, generate_btn, folder_input],
+            outputs=[output_text, batch_html, generate_btn, folder_input, stop_btn],
         )
         batch_tab.select(
             fn=lambda: (
@@ -423,8 +445,9 @@ def create_ui():
                 ),
                 gr.update(value="Run Batch"),
                 gr.update(value=None),
+                gr.update(visible=True),
             ),
-            outputs=[output_text, batch_html, generate_btn, image_input],
+            outputs=[output_text, batch_html, generate_btn, image_input, stop_btn],
         )
 
     return [(torii_interface, "ToriiGate Captioner", "torrigate_captioner")]

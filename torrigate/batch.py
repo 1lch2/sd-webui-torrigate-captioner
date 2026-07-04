@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Iterator, List
@@ -10,6 +11,18 @@ from PIL import Image
 from .api import generate_caption
 
 logger = logging.getLogger("ToriiGate.Batch")
+
+# Module-level stop flag. Set by the UI "Stop" button (via request_stop()) and
+# polled by run_batch() between images so a batch can be terminated gracefully:
+# in-flight requests finish, but no new images are started. Cleared at the
+# start of each run so a previous run's stop doesn't leak into the next one.
+_stop_event = threading.Event()
+
+
+def request_stop() -> None:
+    """Signal any running batch to stop after the current image(s) finish."""
+    _stop_event.set()
+
 
 # Image extensions we are willing to caption. Lower-cased, compared against
 # Path.suffix.lower(). Caption files (.txt/.json) are intentionally excluded
@@ -123,6 +136,7 @@ def render_batch_html(
     elapsed: float,
     done: bool = False,
     error: str = None,
+    stopped: bool = False,
 ) -> str:
     """Render the batch panel as an HTML string: a single-line summary bar
     followed by a bold progress bar. No per-file table (a long batch would
@@ -136,7 +150,12 @@ def render_batch_html(
 
     processed = ok + skipped + failed
     pct = (processed / total * 100.0) if total else 0.0
-    title = "Batch complete" if done else "Processing batch"
+    if stopped:
+        title = "Batch stopped"
+    elif done:
+        title = "Batch complete"
+    else:
+        title = "Processing batch"
 
     bar = (
         "<div style='display:flex;gap:16px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #555;margin-bottom:6px;'>"
@@ -214,7 +233,14 @@ def run_batch(
     parallel (the local llama-server must be able to handle parallel requests,
     e.g. via multiple slots / continuous batching, for this to help).
     Per-image failures are recorded but do not abort the run.
+
+    The run polls the module-level stop flag between images; when the UI "Stop"
+    button sets it, in-flight requests are allowed to finish (HTTP requests
+    cannot be interrupted mid-flight) but no new images are started, and the
+    final progress panel is marked as stopped.
     """
+    _stop_event.clear()  # Reset from any previous run.
+
     try:
         files = collect_images(folder_path)
     except ValueError as exc:
@@ -238,9 +264,13 @@ def run_batch(
     yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
 
     workers = max(1, int(concurrency))
+    stopped = False
 
     if workers == 1:
         for path in to_process:
+            if _stop_event.is_set():
+                stopped = True
+                break
             try:
                 _caption_one(
                     path, prompt, server_url, model_name, timeout,
@@ -271,5 +301,13 @@ def run_batch(
                     logger.exception("[ToriiGate Batch] Failed to caption %s", path)
                     failed += 1
                 yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
+                if _stop_event.is_set():
+                    stopped = True
+                    # Cancel everything not yet started; in-flight ones finish.
+                    for f in futures:
+                        f.cancel()
+                    break
 
-    yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start, done=True)
+    yield render_batch_html(
+        total, ok, skipped, failed, time.perf_counter() - start, done=True, stopped=stopped
+    )
