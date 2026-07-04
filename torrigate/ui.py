@@ -53,6 +53,7 @@ def on_generate_click(
     timeout,
     folder_input,
     overwrite,
+    concurrency,
 ):
     """Handle the Generate button for both single-image and batch modes.
 
@@ -129,6 +130,7 @@ def on_generate_click(
             folder_input,
             overwrite,
             caption_type,
+            int(concurrency),
             prompt,
             actual_url,
             actual_model,
@@ -198,6 +200,15 @@ def create_ui():
                             value=False,
                             info="If unchecked, images that already have a caption file (.txt/.json) are skipped.",
                             elem_id="torrigate_overwrite",
+                        )
+                        concurrency = gr.Slider(
+                            minimum=1,
+                            maximum=16,
+                            step=1,
+                            value=1,
+                            label="Concurrency",
+                            info="Number of images to caption in parallel.",
+                            elem_id="torrigate_concurrency",
                         )
 
                 with gr.Accordion("API Settings", open=False):
@@ -380,6 +391,7 @@ def create_ui():
                 timeout,
                 folder_input,
                 overwrite,
+                concurrency,
             ]
         )
 

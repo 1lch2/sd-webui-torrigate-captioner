@@ -161,10 +161,43 @@ def render_batch_html(
     return bar + progress
 
 
+def _caption_one(
+    path: Path,
+    prompt: str,
+    server_url: str,
+    model_name: str,
+    timeout: float,
+    max_pixels_mp: float,
+    max_new_tokens: int,
+    temperature: float,
+    caption_type: str,
+) -> None:
+    """Load *path*, caption it via the API, and save the result next to it.
+
+    Raises on any failure so the caller can record it. Safe to call from
+    multiple threads: each call opens its own image and issues its own HTTP
+    request, with no shared mutable state.
+    """
+    with Image.open(path) as img:
+        img.load()
+        result = generate_caption(
+            image=img,
+            prompt=prompt,
+            server_url=server_url,
+            model_name=model_name,
+            timeout=timeout,
+            max_pixels_mp=max_pixels_mp,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+    save_caption(path, result, caption_type)
+
+
 def run_batch(
     folder_path: str,
     overwrite: bool,
     caption_type: str,
+    concurrency: int,
     prompt: str,
     server_url: str,
     model_name: str,
@@ -177,7 +210,10 @@ def run_batch(
 
     The *prompt* is image-independent and is built once by the caller. Each
     image is loaded, captioned via :func:`generate_caption`, and the result is
-    saved next to it. Per-image failures are recorded but do not abort the run.
+    saved next to it. *concurrency* controls how many images are captioned in
+    parallel (the local llama-server must be able to handle parallel requests,
+    e.g. via multiple slots / continuous batching, for this to help).
+    Per-image failures are recorded but do not abort the run.
     """
     try:
         files = collect_images(folder_path)
@@ -189,37 +225,51 @@ def run_batch(
     ok = skipped = failed = 0
     start = time.perf_counter()
 
+    # Partition up front so a worker is never wasted on an already-captioned
+    # file. Skipped files are counted instantly; the bar then fills as the
+    # remaining images are processed.
+    to_process = []
+    for path in files:
+        if not overwrite and output_path_for(path, caption_type).exists():
+            skipped += 1
+        else:
+            to_process.append(path)
+
     yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
 
-    for path in files:
-        out_path = output_path_for(path, caption_type)
-        if not overwrite and out_path.exists():
-            skipped += 1
-            yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
-            continue
+    workers = max(1, int(concurrency))
 
-        try:
-            with Image.open(path) as img:
-                img.load()
-                result = generate_caption(
-                    image=img,
-                    prompt=prompt,
-                    server_url=server_url,
-                    model_name=model_name,
-                    timeout=timeout,
-                    max_pixels_mp=max_pixels_mp,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
+    if workers == 1:
+        for path in to_process:
+            try:
+                _caption_one(
+                    path, prompt, server_url, model_name, timeout,
+                    max_pixels_mp, max_new_tokens, temperature, caption_type,
                 )
-            save_caption(path, result, caption_type)
-            ok += 1
-        except Exception as exc:
-            import traceback
+                ok += 1
+            except Exception:
+                logger.exception("[ToriiGate Batch] Failed to caption %s", path)
+                failed += 1
+            yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            logger.exception("[ToriiGate Batch] Failed to caption %s", path)
-            traceback.print_exc()
-            failed += 1
-
-        yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _caption_one, path, prompt, server_url, model_name, timeout,
+                    max_pixels_mp, max_new_tokens, temperature, caption_type,
+                ): path
+                for path in to_process
+            }
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    future.result()
+                    ok += 1
+                except Exception:
+                    logger.exception("[ToriiGate Batch] Failed to caption %s", path)
+                    failed += 1
+                yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
 
     yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start, done=True)
