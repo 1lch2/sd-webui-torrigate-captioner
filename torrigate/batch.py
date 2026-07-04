@@ -20,10 +20,6 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff"}
 # is asked to emit structured JSON; we save a .json file (best-effort parsed).
 JSON_CAPTION_TYPES = {"json", "json_comic", "min_structured_json"}
 
-# Cap the rendered status table to the last N rows so a multi-thousand-image
-# batch does not bloat the browser DOM on every progress yield.
-MAX_TABLE_ROWS = 200
-
 
 def collect_images(folder_path: str) -> List[Path]:
     """Resolve the input folder into a sorted list of image paths.
@@ -120,7 +116,6 @@ def _strip_code_fences(text: str) -> str:
 
 
 def render_batch_html(
-    rows: list,
     total: int,
     ok: int,
     skipped: int,
@@ -129,7 +124,9 @@ def render_batch_html(
     done: bool = False,
     error: str = None,
 ) -> str:
-    """Render the batch panel as an HTML string: a totals bar + status table."""
+    """Render the batch panel as an HTML string: a single-line summary bar
+    followed by a bold progress bar. No per-file table (a long batch would
+    otherwise force the page to scroll endlessly)."""
     if error:
         return (
             "<div style='font-family:var(--font);color:#e53935;padding:8px;'>"
@@ -137,43 +134,14 @@ def render_batch_html(
             "</div>"
         )
 
-    status_cell = {
-        "ok": "<span style='color:#43a047'>✓</span>",
-        "skip": "<span style='color:#fb8c00'>⊘</span>",
-        "fail": "<span style='color:#e53935'>✗</span>",
-    }
-
-    shown_rows = rows
-    hidden = 0
-    if len(rows) > MAX_TABLE_ROWS:
-        hidden = len(rows) - MAX_TABLE_ROWS
-        shown_rows = rows[-MAX_TABLE_ROWS:]
-
-    rows_html = []
-    if hidden:
-        rows_html.append(
-            "<tr><td colspan='3' style='color:#888;font-style:italic;'>"
-            f"…and {hidden} earlier entries</td></tr>"
-        )
-    for r in shown_rows:
-        name = html.escape(r["name"])
-        icon = status_cell.get(r["status"], "")
-        if r["status"] == "skip":
-            time_str = "<span style='color:#888'>skipped</span>"
-        elif r["status"] == "fail" and r.get("detail"):
-            time_str = html.escape(str(r["detail"])[:80])
-        elif r.get("time") is not None:
-            time_str = f"{r['time']:.1f}s"
-        else:
-            time_str = ""
-        rows_html.append(f"<tr><td>{name}</td><td style='text-align:center'>{icon}</td><td>{time_str}</td></tr>")
-
+    processed = ok + skipped + failed
+    pct = (processed / total * 100.0) if total else 0.0
     title = "Batch complete" if done else "Processing batch"
-    progress = f"{ok + skipped + failed}/{total}"
+
     bar = (
         "<div style='display:flex;gap:16px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #555;margin-bottom:6px;'>"
         f"<b>{html.escape(title)}</b>"
-        f"<span>{progress} processed</span>"
+        f"<span>{processed}/{total} processed</span>"
         f"<span style='color:#43a047'>✓ {ok}</span>"
         f"<span style='color:#fb8c00'>⊘ {skipped}</span>"
         f"<span style='color:#e53935'>✗ {failed}</span>"
@@ -181,15 +149,16 @@ def render_batch_html(
         "</div>"
     )
 
-    table = (
-        "<table style='width:100%;border-collapse:collapse;font-size:small;'>"
-        "<thead><tr><th style='text-align:left'>File</th>"
-        "<th style='text-align:center'>Status</th>"
-        "<th style='text-align:left'>Time / Note</th></tr></thead>"
-        f"<tbody>{''.join(rows_html)}</tbody>"
-        "</table>"
+    progress = (
+        "<div style='width:100%;height:24px;background:rgba(128,128,128,0.3);"
+        "border-radius:6px;overflow:hidden;margin-top:10px;'>"
+        f"<div style='width:{pct:.1f}%;height:100%;"
+        "background:var(--color-accent,#1f6feb);transition:width .15s;'></div>"
+        "</div>"
+        f"<div style='font-weight:bold;font-size:large;text-align:center;margin-top:6px;'>"
+        f"{pct:.0f}%</div>"
     )
-    return bar + table
+    return bar + progress
 
 
 def run_batch(
@@ -213,25 +182,22 @@ def run_batch(
     try:
         files = collect_images(folder_path)
     except ValueError as exc:
-        yield render_batch_html([], 0, 0, 0, 0, 0.0, done=True, error=str(exc))
+        yield render_batch_html(0, 0, 0, 0, 0.0, done=True, error=str(exc))
         return
 
     total = len(files)
-    rows = []
     ok = skipped = failed = 0
     start = time.perf_counter()
 
-    yield render_batch_html(rows, total, ok, skipped, failed, time.perf_counter() - start)
+    yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
 
     for path in files:
         out_path = output_path_for(path, caption_type)
         if not overwrite and out_path.exists():
-            rows.append({"name": path.name, "status": "skip", "time": None})
             skipped += 1
-            yield render_batch_html(rows, total, ok, skipped, failed, time.perf_counter() - start)
+            yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
             continue
 
-        t0 = time.perf_counter()
         try:
             with Image.open(path) as img:
                 img.load()
@@ -246,21 +212,14 @@ def run_batch(
                     temperature=temperature,
                 )
             save_caption(path, result, caption_type)
-            rows.append({"name": path.name, "status": "ok", "time": time.perf_counter() - t0})
             ok += 1
         except Exception as exc:
             import traceback
 
             logger.exception("[ToriiGate Batch] Failed to caption %s", path)
             traceback.print_exc()
-            rows.append({
-                "name": path.name,
-                "status": "fail",
-                "time": None,
-                "detail": str(exc),
-            })
             failed += 1
 
-        yield render_batch_html(rows, total, ok, skipped, failed, time.perf_counter() - start)
+        yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start)
 
-    yield render_batch_html(rows, total, ok, skipped, failed, time.perf_counter() - start, done=True)
+    yield render_batch_html(total, ok, skipped, failed, time.perf_counter() - start, done=True)

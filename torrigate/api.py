@@ -6,6 +6,7 @@ from PIL import Image
 
 logger = logging.getLogger("ToriiGate.API")
 
+
 def pil_image_to_base64(img_pil: Image.Image, max_pixels_mp: float = 1.0) -> str:
     """Convert a PIL Image to a base64-encoded PNG string suitable for embedding in a data-URI.
     Downscales the image if it exceeds max_pixels_mp to prevent massive TTFT."""
@@ -18,12 +19,15 @@ def pil_image_to_base64(img_pil: Image.Image, max_pixels_mp: float = 1.0) -> str
         scale = (max_pixels_count / current_pixels) ** 0.5
         new_w = max(1, int(img_pil.width * scale))
         new_h = max(1, int(img_pil.height * scale))
-        logger.info(f"[ToriiGate API] Downscaling image from {img_pil.width}x{img_pil.height} to {new_w}x{new_h}")
+        logger.info(
+            f"[ToriiGate API] Downscaling image from {img_pil.width}x{img_pil.height} to {new_w}x{new_h}"
+        )
         img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    
+
     buffered = io.BytesIO()
     img_pil.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
 
 def build_vision_payload(
     model_name: str,
@@ -62,6 +66,7 @@ def build_vision_payload(
         payload["seed"] = seed
     return payload
 
+
 def send_chat_request(server_url: str, payload: dict, timeout: float) -> str:
     """POST *payload* to `{server_url}/v1/chat/completions` and return the
     generated text. Raises a `RuntimeError` with a human-readable message
@@ -75,7 +80,9 @@ def send_chat_request(server_url: str, payload: dict, timeout: float) -> str:
         ) from exc
 
     endpoint = server_url.rstrip("/") + "/v1/chat/completions"
-    logger.info(f"[ToriiGate API] POST -> {endpoint}  (model={payload.get('model', '?')})")
+    logger.info(
+        f"[ToriiGate API] POST -> {endpoint}  (model={payload.get('model', '?')})"
+    )
 
     try:
         response = requests.post(
@@ -126,6 +133,7 @@ def send_chat_request(server_url: str, payload: dict, timeout: float) -> str:
 
     return choices[0].get("message", {}).get("content", "")
 
+
 def generate_caption(
     image: Image.Image,
     prompt: str,
@@ -133,15 +141,16 @@ def generate_caption(
     model_name: str = "DraconicDragon/ToriiGate-0.5-GGUF:Q4_K_M",
     timeout: float = 120.0,
     max_pixels_mp: float = 1.0,
-    max_new_tokens: int = 512,
+    max_new_tokens: int = 2048,
     temperature: float = 0.5,
     seed: int = 0,
 ):
     import time
+
     start_time = time.perf_counter()
-    
+
     image_b64 = pil_image_to_base64(image, max_pixels_mp)
-    
+
     payload = build_vision_payload(
         model_name=model_name,
         system_prompt="",
@@ -151,8 +160,10 @@ def generate_caption(
         max_tokens=max_new_tokens,
         seed=seed,
     )
-    
+
     result = send_chat_request(server_url=server_url, payload=payload, timeout=timeout)
     elapsed = time.perf_counter() - start_time
-    logger.info(f"[ToriiGate] Caption generation finished in {elapsed:.1f}s ({len(result)} chars).")
+    logger.info(
+        f"[ToriiGate] Caption generation finished in {elapsed:.1f}s ({len(result)} chars)."
+    )
     return result.strip()

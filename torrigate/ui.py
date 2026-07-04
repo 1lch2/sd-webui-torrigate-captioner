@@ -114,7 +114,10 @@ def on_generate_click(
         if is_batch:
             yield (
                 gr.update(visible=False),
-                gr.update(visible=True, value=render_batch_html([], 0, 0, 0, 0, 0.0, done=True, error=err)),
+                gr.update(
+                    visible=True,
+                    value=render_batch_html(0, 0, 0, 0, 0.0, done=True, error=err),
+                ),
             )
         else:
             yield (gr.update(visible=True, value=err), gr.update(visible=False))
@@ -139,7 +142,10 @@ def on_generate_click(
 
     # Single-image mode.
     if image is None:
-        yield (gr.update(visible=True, value="Please upload an image first."), gr.update(visible=False))
+        yield (
+            gr.update(visible=True, value="Please upload an image first."),
+            gr.update(visible=False),
+        )
         return
 
     try:
@@ -158,7 +164,10 @@ def on_generate_click(
         import traceback
 
         traceback.print_exc()
-        yield (gr.update(visible=True, value=f"Error: {str(e)}"), gr.update(visible=False))
+        yield (
+            gr.update(visible=True, value=f"Error: {str(e)}"),
+            gr.update(visible=False),
+        )
 
 
 def create_ui():
@@ -167,7 +176,9 @@ def create_ui():
             # Left Column
             with gr.Column(scale=1):
                 with gr.Tabs(elem_id="torrigate_input_mode"):
-                    with gr.Tab("Single Image", elem_id="torrigate_single_tab") as single_tab:
+                    with gr.Tab(
+                        "Single Image", elem_id="torrigate_single_tab"
+                    ) as single_tab:
                         image_input = gr.Image(
                             label="Source Image",
                             type="pil",
@@ -205,7 +216,7 @@ def create_ui():
                     )
                     max_pixels_mp = gr.Slider(
                         minimum=0.1,
-                        maximum=8.0,
+                        maximum=4.0,
                         step=0.1,
                         value=2.0,
                         label="Max Pixels (MP)",
@@ -213,9 +224,9 @@ def create_ui():
                         elem_id="torrigate_max_pixels_mp",
                     )
                     max_new_tokens = gr.Slider(
-                        minimum=64,
+                        minimum=1024,
                         maximum=8192,
-                        step=64,
+                        step=512,
                         value=2048,
                         label="Max New Tokens",
                         info="Maximum generated tokens.",
@@ -394,7 +405,10 @@ def create_ui():
         batch_tab.select(
             fn=lambda: (
                 gr.update(visible=False),
-                gr.update(visible=True, value="<i style='color:#888'>Batch results will appear here.</i>"),
+                gr.update(
+                    visible=True,
+                    value="<i style='color:#888'>Batch results will appear here.</i>",
+                ),
                 gr.update(value="Run Batch"),
                 gr.update(value=None),
             ),
