@@ -3,6 +3,7 @@ from typing import List, Tuple
 from modules import shared
 from .grounding import build_grounding
 from .api import generate_caption
+from .batch import run_batch, render_batch_html
 
 CAPTION_TYPES = [
     "short",
@@ -50,12 +51,20 @@ def on_generate_click(
     max_new_tokens,
     temperature,
     timeout,
+    folder_input,
+    overwrite,
 ):
-    if image is None:
-        return "Please upload an image first."
+    """Handle the Generate button for both single-image and batch modes.
 
+    This is a generator: each ``yield`` is a ``(output_text_update,
+    batch_html_update)`` tuple, so Gradio streams updates to the two
+    right-column outputs. Mode is selected by whether a folder path is given.
+    """
+    is_batch = bool(folder_input and folder_input.strip())
+
+    # Build the (image-independent) prompt and resolve API settings once,
+    # shared by both modes.
     try:
-        # 1. Build prompt
         prompt = build_grounding(
             caption_type=caption_type,
             use_names=use_names,
@@ -83,7 +92,6 @@ def on_generate_click(
             char5_description=char5_description,
         )
 
-        # 2. Call API
         actual_url = (
             server_url.strip()
             if server_url
@@ -98,7 +106,43 @@ def on_generate_click(
                 "DraconicDragon/ToriiGate-0.5-GGUF:Q4_K_M",
             )
         )
+    except Exception as e:
+        import traceback
 
+        traceback.print_exc()
+        err = f"Error: {str(e)}"
+        if is_batch:
+            yield (
+                gr.update(visible=False),
+                gr.update(visible=True, value=render_batch_html([], 0, 0, 0, 0, 0.0, done=True, error=err)),
+            )
+        else:
+            yield (gr.update(visible=True, value=err), gr.update(visible=False))
+        return
+
+    # Batch mode: stream per-image progress into the batch panel.
+    if is_batch:
+        for batch_html in run_batch(
+            folder_input,
+            overwrite,
+            caption_type,
+            prompt,
+            actual_url,
+            actual_model,
+            float(timeout),
+            float(max_pixels_mp),
+            int(max_new_tokens),
+            float(temperature),
+        ):
+            yield (gr.update(visible=False), gr.update(visible=True, value=batch_html))
+        return
+
+    # Single-image mode.
+    if image is None:
+        yield (gr.update(visible=True, value="Please upload an image first."), gr.update(visible=False))
+        return
+
+    try:
         result = generate_caption(
             image=image,
             prompt=prompt,
@@ -109,13 +153,12 @@ def on_generate_click(
             max_new_tokens=int(max_new_tokens),
             temperature=float(temperature),
         )
-
-        return result
+        yield (gr.update(visible=True, value=result), gr.update(visible=False))
     except Exception as e:
         import traceback
 
         traceback.print_exc()
-        return f"Error: {str(e)}"
+        yield (gr.update(visible=True, value=f"Error: {str(e)}"), gr.update(visible=False))
 
 
 def create_ui():
@@ -123,12 +166,28 @@ def create_ui():
         with gr.Row():
             # Left Column
             with gr.Column(scale=1):
-                image_input = gr.Image(
-                    label="Source Image",
-                    type="pil",
-                    height=300,
-                    elem_id="torrigate_image_input",
-                )
+                with gr.Tabs(elem_id="torrigate_input_mode"):
+                    with gr.Tab("Single Image", elem_id="torrigate_single_tab") as single_tab:
+                        image_input = gr.Image(
+                            label="Source Image",
+                            type="pil",
+                            height=300,
+                            elem_id="torrigate_image_input",
+                        )
+                    with gr.Tab("Batch", elem_id="torrigate_batch_tab") as batch_tab:
+                        folder_input = gr.Textbox(
+                            label="Input Folder",
+                            placeholder="C:/path/to/images  (end with ** for subdirectories)",
+                            info="Folder of images to caption. End with ** to recurse into all subdirectories.",
+                            lines=1,
+                            elem_id="torrigate_folder_input",
+                        )
+                        overwrite = gr.Checkbox(
+                            label="Overwrite existing captions",
+                            value=False,
+                            info="If unchecked, images that already have a caption file (.txt/.json) are skipped.",
+                            elem_id="torrigate_overwrite",
+                        )
 
                 with gr.Accordion("API Settings", open=False):
                     # We can use shared.opts inside the UI but it only evaluated once. Let's just use it as default if blank.
@@ -281,6 +340,11 @@ def create_ui():
                     interactive=False,
                     elem_id="torrigate_output_text",
                 )
+                batch_html = gr.HTML(
+                    value="<i style='color:#888'>Batch results will appear here.</i>",
+                    visible=False,
+                    elem_id="torrigate_batch_html",
+                )
 
         inputs = (
             [
@@ -303,9 +367,38 @@ def create_ui():
                 max_new_tokens,
                 temperature,
                 timeout,
+                folder_input,
+                overwrite,
             ]
         )
 
-        generate_btn.click(fn=on_generate_click, inputs=inputs, outputs=output_text)
+        generate_event = generate_btn.click(
+            fn=on_generate_click,
+            inputs=inputs,
+            outputs=[output_text, batch_html],
+        )
+
+        # Switching tabs toggles which right-column panel is shown, relabels
+        # the button, and clears the inactive input so the generate handler's
+        # mode detection (folder non-empty => batch) stays unambiguous. Each
+        # .select() unconditionally sets its own mode (mirrors modules/ui.py).
+        single_tab.select(
+            fn=lambda: (
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(value="Generate Caption"),
+                "",
+            ),
+            outputs=[output_text, batch_html, generate_btn, folder_input],
+        )
+        batch_tab.select(
+            fn=lambda: (
+                gr.update(visible=False),
+                gr.update(visible=True, value="<i style='color:#888'>Batch results will appear here.</i>"),
+                gr.update(value="Run Batch"),
+                gr.update(value=None),
+            ),
+            outputs=[output_text, batch_html, generate_btn, image_input],
+        )
 
     return [(torii_interface, "ToriiGate Captioner", "torrigate_captioner")]
