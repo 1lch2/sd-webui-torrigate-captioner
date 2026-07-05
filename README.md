@@ -38,7 +38,7 @@ _(Alternatively, you can clone this repository directly into your `extensions/` 
 
 ## Requirements
 
-The extension depends on the `requests` library. If you encounter issues, you may manually install it:
+The extension depends on the `openai` library (used as an OpenAI-compatible client to talk to your local server, which keeps connections pooled and avoids spurious model reloads under concurrent batch inference). If you encounter issues, you may manually install it:
 
 ```bash
 pip install -r requirements.txt
